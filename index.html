@@ -298,7 +298,12 @@
     <section class="panel" id="panel-youtube">
       <div class="card">
         <h2>Capture a YouTube video</h2>
-        <p class="hint">Paste a YouTube link below. We'll pull the title and thumbnail automatically. Because YouTube only shows transcripts to a person in a browser, you'll need to copy the transcript yourself and paste it in — one click below opens the video for you.</p>
+        <p class="hint">Paste a YouTube link. Your server fetches the transcript and saves it for you.</p>
+        <input type="url" id="ytAutoUrl" placeholder="https://www.youtube.com/watch?v=...">
+        <button class="btn" id="ytCaptureBtn">Capture video</button>
+        <div class="hint" id="ytStatus" style="margin-top:12px;"></div>
+        <details style="margin-top:6px;">
+          <summary class="hint" style="cursor:pointer;">No luck? Paste the transcript yourself</summary>
         <input type="url" id="ytUrl" placeholder="https://www.youtube.com/watch?v=...">
         <button class="btn" id="ytLookupBtn">Look up video</button>
         <div id="ytInfo" style="display:none;margin-top:16px;">
@@ -308,6 +313,7 @@
           <textarea id="ytTranscript" placeholder="Paste the transcript here..."></textarea>
           <button class="btn" id="ytSaveBtn">Save video</button>
         </div>
+        </details>
       </div>
     </section>
  
@@ -332,10 +338,16 @@
     <section class="panel" id="panel-url">
       <div class="card">
         <h2>Capture an article</h2>
-        <p class="hint">Browsers won't let a web page fetch another site's article for you — that's a security rule, not a bug. Paste the link, then paste the article text itself below.</p>
-        <input type="url" id="urlLink" placeholder="https://example.com/article">
-        <textarea id="urlText" placeholder="Paste the article text here..."></textarea>
-        <button class="btn" id="urlSaveBtn">Save article</button>
+        <p class="hint">Paste a link. Your server fetches the page and saves the readable text for you.</p>
+        <input type="url" id="urlAutoLink" placeholder="https://example.com/article">
+        <button class="btn" id="urlCaptureBtn">Capture article</button>
+        <div class="hint" id="urlStatus" style="margin-top:12px;"></div>
+        <details style="margin-top:6px;">
+          <summary class="hint" style="cursor:pointer;">Page won't load? Paste the text yourself</summary>
+          <input type="url" id="urlLink" placeholder="https://example.com/article">
+          <textarea id="urlText" placeholder="Paste the article text here..."></textarea>
+          <button class="btn" id="urlSaveBtn">Save article</button>
+        </details>
       </div>
     </section>
  
@@ -559,6 +571,56 @@ document.getElementById('voiceSaveBtn').addEventListener('click', async () => {
   showToast('Saved!');
 });
  
+/* ---------- SERVER CAPTURE (Level 3) ----------
+   Hands a link to one of your Edge Functions. supabase-js sends your
+   login token along automatically, so the function knows it's you. */
+async function callCapture(fnName, url) {
+  const { data, error } = await sb.functions.invoke(fnName, { body: { url } });
+  if (error) {
+    let msg = error.message;
+    try {
+      const body = await error.context.json();
+      if (body && body.error) msg = body.error;
+    } catch (_) {}
+    throw new Error(msg);
+  }
+  if (!data || !data.ok) throw new Error((data && data.error) || 'Capture failed');
+  return data;
+}
+
+function wireCapture(btnId, inputId, statusId, fnName, busyText, describe) {
+  const btn = document.getElementById(btnId);
+  const input = document.getElementById(inputId);
+  const status = document.getElementById(statusId);
+  btn.addEventListener('click', async () => {
+    const url = input.value.trim();
+    if (!url) { showToast('Paste a link first'); return; }
+    btn.disabled = true;
+    const label = btn.textContent;
+    btn.textContent = busyText;
+    status.textContent = '';
+    try {
+      const data = await callCapture(fnName, url);
+      status.textContent = describe(data);
+      input.value = '';
+      showToast('Saved!');
+    } catch (e) {
+      status.textContent = '⚠️ ' + e.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
+}
+
+wireCapture('ytCaptureBtn', 'ytAutoUrl', 'ytStatus', 'capture-youtube', 'Fetching transcript…',
+  d => d.has_transcript
+    ? `✅ Saved "${d.title}" (full transcript, via ${d.fetched_via})`
+    : `⚠️ Saved "${d.title}", but only the description. No transcript was available.`);
+
+wireCapture('urlCaptureBtn', 'urlAutoLink', 'urlStatus', 'capture-url', 'Fetching page…',
+  d => `✅ Saved "${d.title}" from ${d.hostname} (${d.chars.toLocaleString()} characters)`);
+
 /* ---------- YOUTUBE ---------- */
 function extractYouTubeId(url) {
   const patterns = [
